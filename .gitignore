@@ -1,10 +1,39 @@
+# Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
+*$py.class
 
+# Virtual environments and local environment files
 .env
+.envrc
 .venv/
+env/
 venv/
+ENV/
 
+# Local SQLite data
 data/
 *.sqlite3
 *.db
+*.db-journal
+
+# Test and tooling caches
+.coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Editor and OS noise
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
