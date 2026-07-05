@@ -1,0 +1,17 @@
+[Unit]
+Description=World of Darkness Threat Rating Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+Group=opc
+WorkingDirectory=/opt/threat-rating-discord-bot
+EnvironmentFile=/opt/threat-rating-discord-bot/.env
+ExecStart=/opt/threat-rating-discord-bot/.venv/bin/python /opt/threat-rating-discord-bot/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

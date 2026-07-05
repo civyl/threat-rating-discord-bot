@@ -48,6 +48,10 @@ The bot does not infer or assign ratings automatically. Storytellers set and adj
    python bot.py
    ```
 
+## Hosting
+
+For Oracle Cloud hosting, see [ORACLE_DEPLOY.md](ORACLE_DEPLOY.md).
+
 ## Configuration
 
 Users with **Manage Server** permission can configure the bot:
