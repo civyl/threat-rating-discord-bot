@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import sqlite3
 
-from storage import ThreatStore
+from storage import ThreatStore, npc_target_id, user_target_id
 
 
 class ThreatStoreTests(unittest.TestCase):
@@ -16,9 +16,10 @@ class ThreatStoreTests(unittest.TestCase):
         store = self.make_store()
         store.ensure_guild(123)
 
-        record, old_rating = store.change_rating(
+        record, old_rating = store.change_user_rating(
             123,
             456,
+            "Test User",
             action="set",
             new_rating=15,
             reason="Masquerade breach caught on traffic cameras",
@@ -27,9 +28,12 @@ class ThreatStoreTests(unittest.TestCase):
 
         self.assertEqual(old_rating, 0)
         self.assertEqual(record.rating, 10)
+        self.assertEqual(record.target_id, user_target_id(456))
+        self.assertEqual(record.target_name, "Test User")
+        self.assertEqual(record.user_id, 456)
         self.assertEqual(record.last_reason, "Masquerade breach caught on traffic cameras")
 
-        history = store.history(123, 456)
+        history = store.user_history(123, 456)
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["old_rating"], 0)
         self.assertEqual(history[0]["new_rating"], 10)
@@ -38,13 +42,13 @@ class ThreatStoreTests(unittest.TestCase):
         store = self.make_store()
         store.ensure_guild(123)
 
-        store.change_rating(123, 1, action="set", new_rating=2, reason="A", moderator_id=9)
-        store.change_rating(123, 2, action="set", new_rating=8, reason="B", moderator_id=9)
-        store.change_rating(123, 3, action="set", new_rating=4, reason="C", moderator_id=9)
+        store.change_user_rating(123, 1, "A", action="set", new_rating=2, reason="A", moderator_id=9)
+        store.change_npc_rating(123, "Sheriff Dusk", action="set", new_rating=8, reason="B", moderator_id=9)
+        store.change_user_rating(123, 3, "C", action="set", new_rating=4, reason="C", moderator_id=9)
 
         records = store.leaderboard(123)
 
-        self.assertEqual([record.user_id for record in records], [2, 3, 1])
+        self.assertEqual([record.target_id for record in records], [npc_target_id("Sheriff Dusk"), user_target_id(3), user_target_id(1)])
 
     def test_settings_can_be_updated_partially(self):
         store = self.make_store()
@@ -55,6 +59,26 @@ class ThreatStoreTests(unittest.TestCase):
 
         self.assertEqual(settings.mod_role_id, 111)
         self.assertEqual(settings.alert_threshold, 7)
+
+    def test_npc_records_are_keyed_by_normalized_name(self):
+        store = self.make_store()
+        store.ensure_guild(123)
+
+        record, _old_rating = store.change_npc_rating(
+            123,
+            "  Sheriff   Dusk ",
+            action="set",
+            new_rating=6,
+            reason="Witnessed feeding aftermath",
+            moderator_id=999,
+        )
+
+        same_record = store.get_npc_record(123, "sheriff dusk")
+
+        self.assertEqual(record.target_id, npc_target_id("Sheriff Dusk"))
+        self.assertEqual(record.target_name, "Sheriff Dusk")
+        self.assertIsNone(record.user_id)
+        self.assertEqual(same_record.rating, 6)
 
     def test_existing_hundred_point_data_is_migrated_to_ten_point_scale(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -119,9 +143,12 @@ class ThreatStoreTests(unittest.TestCase):
 
         store = ThreatStore(database_path)
 
-        self.assertEqual(store.get_record(123, 456).rating, 8)
+        record = store.get_user_record(123, 456)
+        self.assertEqual(record.rating, 8)
+        self.assertEqual(record.target_id, user_target_id(456))
+        self.assertEqual(record.target_name, "<@456>")
         self.assertEqual(store.get_settings(123).alert_threshold, 8)
-        history = store.history(123, 456)
+        history = store.user_history(123, 456)
         self.assertEqual(history[0]["action"], "raise")
         self.assertEqual(history[0]["old_rating"], 5)
         self.assertEqual(history[0]["new_rating"], 8)

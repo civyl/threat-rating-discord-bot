@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from collections.abc import Iterator
 from pathlib import Path
 
 
@@ -14,6 +14,17 @@ def utc_now_iso() -> str:
 
 def clamp_rating(value: int) -> int:
     return max(0, min(10, value))
+
+
+def user_target_id(user_id: int) -> str:
+    return f"user:{user_id}"
+
+
+def npc_target_id(name: str) -> str:
+    cleaned = " ".join(name.strip().split())
+    if not cleaned:
+        raise ValueError("NPC name is required.")
+    return f"npc:{cleaned.casefold()}"
 
 
 @dataclass(frozen=True)
@@ -27,7 +38,9 @@ class GuildSettings:
 @dataclass(frozen=True)
 class ThreatRecord:
     guild_id: int
-    user_id: int
+    target_id: str
+    target_name: str
+    user_id: int | None
     rating: int
     updated_at: str
     updated_by: int | None
@@ -52,6 +65,7 @@ class ThreatStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            self._migrate_legacy_user_tables(db)
             db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -66,12 +80,14 @@ class ThreatStore:
                 """
                 CREATE TABLE IF NOT EXISTS threats (
                     guild_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    target_name TEXT NOT NULL,
+                    user_id INTEGER,
                     rating INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL,
                     updated_by INTEGER,
                     last_reason TEXT,
-                    PRIMARY KEY (guild_id, user_id)
+                    PRIMARY KEY (guild_id, target_id)
                 )
                 """
             )
@@ -80,7 +96,9 @@ class ThreatStore:
                 CREATE TABLE IF NOT EXISTS threat_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    target_name TEXT NOT NULL,
+                    user_id INTEGER,
                     action TEXT NOT NULL,
                     delta INTEGER NOT NULL,
                     old_rating INTEGER NOT NULL,
@@ -94,10 +112,113 @@ class ThreatStore:
             db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_threat_history_lookup
-                ON threat_history (guild_id, user_id, created_at DESC)
+                ON threat_history (guild_id, target_id, created_at DESC)
                 """
             )
             self._migrate_scale_to_ten(db)
+
+    def _table_columns(self, db: sqlite3.Connection, table_name: str) -> set[str]:
+        rows = db.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {row["name"] for row in rows}
+
+    def _migrate_legacy_user_tables(self, db: sqlite3.Connection) -> None:
+        tables = {
+            row["name"]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        if "threats" not in tables:
+            return
+
+        threat_columns = self._table_columns(db, "threats")
+        if "target_id" in threat_columns:
+            return
+
+        db.execute("ALTER TABLE threats RENAME TO threats_legacy_user")
+        if "threat_history" in tables:
+            db.execute("ALTER TABLE threat_history RENAME TO threat_history_legacy_user")
+
+        db.execute(
+            """
+            CREATE TABLE threats (
+                guild_id INTEGER NOT NULL,
+                target_id TEXT NOT NULL,
+                target_name TEXT NOT NULL,
+                user_id INTEGER,
+                rating INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                updated_by INTEGER,
+                last_reason TEXT,
+                PRIMARY KEY (guild_id, target_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO threats (
+                guild_id, target_id, target_name, user_id, rating,
+                updated_at, updated_by, last_reason
+            )
+            SELECT
+                guild_id,
+                'user:' || user_id,
+                '<@' || user_id || '>',
+                user_id,
+                rating,
+                updated_at,
+                updated_by,
+                last_reason
+            FROM threats_legacy_user
+            """
+        )
+
+        if "threat_history_legacy_user" in {
+            row["name"]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }:
+            db.execute(
+                """
+                CREATE TABLE threat_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    target_name TEXT NOT NULL,
+                    user_id INTEGER,
+                    action TEXT NOT NULL,
+                    delta INTEGER NOT NULL,
+                    old_rating INTEGER NOT NULL,
+                    new_rating INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    moderator_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO threat_history (
+                    id, guild_id, target_id, target_name, user_id, action,
+                    delta, old_rating, new_rating, reason, moderator_id, created_at
+                )
+                SELECT
+                    id,
+                    guild_id,
+                    'user:' || user_id,
+                    '<@' || user_id || '>',
+                    user_id,
+                    action,
+                    delta,
+                    old_rating,
+                    new_rating,
+                    reason,
+                    moderator_id,
+                    created_at
+                FROM threat_history_legacy_user
+                """
+            )
 
     def _migrate_scale_to_ten(self, db: sqlite3.Connection) -> None:
         db.execute(
@@ -216,37 +337,38 @@ class ThreatStore:
                 )
         return self.get_settings(guild_id)
 
-    def get_record(self, guild_id: int, user_id: int) -> ThreatRecord | None:
+    def get_record(self, guild_id: int, target_id: str) -> ThreatRecord | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT * FROM threats WHERE guild_id = ? AND user_id = ?",
-                (guild_id, user_id),
+                "SELECT * FROM threats WHERE guild_id = ? AND target_id = ?",
+                (guild_id, target_id),
             ).fetchone()
         if row is None:
             return None
-        return ThreatRecord(
-            guild_id=row["guild_id"],
-            user_id=row["user_id"],
-            rating=row["rating"],
-            updated_at=row["updated_at"],
-            updated_by=row["updated_by"],
-            last_reason=row["last_reason"],
-        )
+        return self._row_to_record(row)
+
+    def get_user_record(self, guild_id: int, user_id: int) -> ThreatRecord | None:
+        return self.get_record(guild_id, user_target_id(user_id))
+
+    def get_npc_record(self, guild_id: int, name: str) -> ThreatRecord | None:
+        return self.get_record(guild_id, npc_target_id(name))
 
     def change_rating(
         self,
         guild_id: int,
-        user_id: int,
+        target_id: str,
+        target_name: str,
         *,
         action: str,
         new_rating: int,
         reason: str,
         moderator_id: int,
+        user_id: int | None = None,
     ) -> tuple[ThreatRecord, int]:
         if not reason.strip():
             raise ValueError("A reason is required.")
 
-        old_record = self.get_record(guild_id, user_id)
+        old_record = self.get_record(guild_id, target_id)
         old_rating = old_record.rating if old_record else 0
         rating = clamp_rating(new_rating)
         now = utc_now_iso()
@@ -255,27 +377,41 @@ class ThreatStore:
             db.execute(
                 """
                 INSERT INTO threats (
-                    guild_id, user_id, rating, updated_at, updated_by, last_reason
+                    guild_id, target_id, target_name, user_id, rating,
+                    updated_at, updated_by, last_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, target_id) DO UPDATE SET
+                    target_name = excluded.target_name,
+                    user_id = excluded.user_id,
                     rating = excluded.rating,
                     updated_at = excluded.updated_at,
                     updated_by = excluded.updated_by,
                     last_reason = excluded.last_reason
                 """,
-                (guild_id, user_id, rating, now, moderator_id, reason.strip()),
+                (
+                    guild_id,
+                    target_id,
+                    target_name,
+                    user_id,
+                    rating,
+                    now,
+                    moderator_id,
+                    reason.strip(),
+                ),
             )
             db.execute(
                 """
                 INSERT INTO threat_history (
-                    guild_id, user_id, action, delta, old_rating, new_rating,
-                    reason, moderator_id, created_at
+                    guild_id, target_id, target_name, user_id, action, delta,
+                    old_rating, new_rating, reason, moderator_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     guild_id,
+                    target_id,
+                    target_name,
                     user_id,
                     action,
                     rating - old_rating,
@@ -287,39 +423,127 @@ class ThreatStore:
                 ),
             )
 
-        record = self.get_record(guild_id, user_id)
+        record = self.get_record(guild_id, target_id)
         if record is None:
             raise RuntimeError("Threat record was not saved.")
         return record, old_rating
 
-    def reset_rating(
+    def change_user_rating(
         self,
         guild_id: int,
         user_id: int,
+        display_name: str,
         *,
+        action: str,
+        new_rating: int,
         reason: str,
         moderator_id: int,
     ) -> tuple[ThreatRecord, int]:
         return self.change_rating(
             guild_id,
-            user_id,
-            action="reset",
-            new_rating=0,
+            user_target_id(user_id),
+            display_name,
+            action=action,
+            new_rating=new_rating,
+            reason=reason,
+            moderator_id=moderator_id,
+            user_id=user_id,
+        )
+
+    def change_npc_rating(
+        self,
+        guild_id: int,
+        name: str,
+        *,
+        action: str,
+        new_rating: int,
+        reason: str,
+        moderator_id: int,
+    ) -> tuple[ThreatRecord, int]:
+        display_name = " ".join(name.strip().split())
+        return self.change_rating(
+            guild_id,
+            npc_target_id(display_name),
+            display_name,
+            action=action,
+            new_rating=new_rating,
             reason=reason,
             moderator_id=moderator_id,
         )
 
-    def history(self, guild_id: int, user_id: int, limit: int = 10) -> list[sqlite3.Row]:
+    def reset_rating(
+        self,
+        guild_id: int,
+        target_id: str,
+        target_name: str,
+        *,
+        reason: str,
+        moderator_id: int,
+        user_id: int | None = None,
+    ) -> tuple[ThreatRecord, int]:
+        return self.change_rating(
+            guild_id,
+            target_id,
+            target_name,
+            action="reset",
+            new_rating=0,
+            reason=reason,
+            moderator_id=moderator_id,
+            user_id=user_id,
+        )
+
+    def reset_user_rating(
+        self,
+        guild_id: int,
+        user_id: int,
+        display_name: str,
+        *,
+        reason: str,
+        moderator_id: int,
+    ) -> tuple[ThreatRecord, int]:
+        return self.reset_rating(
+            guild_id,
+            user_target_id(user_id),
+            display_name,
+            reason=reason,
+            moderator_id=moderator_id,
+            user_id=user_id,
+        )
+
+    def reset_npc_rating(
+        self,
+        guild_id: int,
+        name: str,
+        *,
+        reason: str,
+        moderator_id: int,
+    ) -> tuple[ThreatRecord, int]:
+        display_name = " ".join(name.strip().split())
+        return self.reset_rating(
+            guild_id,
+            npc_target_id(display_name),
+            display_name,
+            reason=reason,
+            moderator_id=moderator_id,
+        )
+
+    def history(self, guild_id: int, target_id: str, limit: int = 10) -> list[sqlite3.Row]:
         with self._connect() as db:
             return db.execute(
                 """
                 SELECT * FROM threat_history
-                WHERE guild_id = ? AND user_id = ?
+                WHERE guild_id = ? AND target_id = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (guild_id, user_id, max(1, min(25, limit))),
+                (guild_id, target_id, max(1, min(25, limit))),
             ).fetchall()
+
+    def user_history(self, guild_id: int, user_id: int, limit: int = 10) -> list[sqlite3.Row]:
+        return self.history(guild_id, user_target_id(user_id), limit)
+
+    def npc_history(self, guild_id: int, name: str, limit: int = 10) -> list[sqlite3.Row]:
+        return self.history(guild_id, npc_target_id(name), limit)
 
     def leaderboard(self, guild_id: int, limit: int = 10) -> list[ThreatRecord]:
         with self._connect() as db:
@@ -332,14 +556,16 @@ class ThreatStore:
                 """,
                 (guild_id, max(1, min(25, limit))),
             ).fetchall()
-        return [
-            ThreatRecord(
-                guild_id=row["guild_id"],
-                user_id=row["user_id"],
-                rating=row["rating"],
-                updated_at=row["updated_at"],
-                updated_by=row["updated_by"],
-                last_reason=row["last_reason"],
-            )
-            for row in rows
-        ]
+        return [self._row_to_record(row) for row in rows]
+
+    def _row_to_record(self, row: sqlite3.Row) -> ThreatRecord:
+        return ThreatRecord(
+            guild_id=row["guild_id"],
+            target_id=row["target_id"],
+            target_name=row["target_name"],
+            user_id=row["user_id"],
+            rating=row["rating"],
+            updated_at=row["updated_at"],
+            updated_by=row["updated_by"],
+            last_reason=row["last_reason"],
+        )

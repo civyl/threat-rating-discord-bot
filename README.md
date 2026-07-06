@@ -13,18 +13,25 @@ The bot does not infer or assign ratings automatically. Storytellers set and adj
 - Required in-fiction reasons for all rating changes
 - Recent history and current leaderboard
 - Optional threshold alerts
+- Discord-user and named-NPC targets
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
 | `/threat view user` | View a character's current monitoring heat. |
+| `/threat npc-view name` | View an NPC's current monitoring heat. |
 | `/threat set user rating reason` | Set monitoring heat from 0 to 10. |
+| `/threat npc-set name rating reason` | Set an NPC's monitoring heat from 0 to 10. |
 | `/threat raise user amount reason` | Raise monitoring heat. |
+| `/threat npc-raise name amount reason` | Raise an NPC's monitoring heat. |
 | `/threat lower user amount reason` | Decrease monitoring heat. |
+| `/threat npc-lower name amount reason` | Decrease an NPC's monitoring heat. |
 | `/threat reset user reason` | Reset monitoring heat to 0. |
+| `/threat npc-reset name reason` | Reset an NPC's monitoring heat to 0. |
 | `/threat history user limit` | Show recent monitoring heat changes. |
-| `/threat leaderboard limit` | Show the characters with the highest active monitoring heat. |
+| `/threat npc-history name limit` | Show recent monitoring heat changes for an NPC. |
+| `/threat leaderboard limit` | Show the user characters and NPCs with the highest active monitoring heat. |
 | `/threat config mod_role alert_channel alert_threshold` | Configure write access and alerts. |
 
 ## Setup
