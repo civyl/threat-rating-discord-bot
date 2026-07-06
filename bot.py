@@ -259,9 +259,9 @@ async def threat_leaderboard(interaction: discord.Interaction, limit: app_comman
 )
 async def threat_config(
     interaction: discord.Interaction,
-    mod_role: Optional[discord.Role] = None,
-    alert_channel: Optional[discord.TextChannel] = None,
-    alert_threshold: Optional[app_commands.Range[int, 0, 100]] = None,
+    mod_role: discord.Role = None,
+    alert_channel: discord.TextChannel = None,
+    alert_threshold: app_commands.Range[int, 0, 100] = None,
 ) -> None:
     if not await ensure_moderator(interaction):
         return
