@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -15,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 
-def optional_int(name: str) -> int | None:
+def optional_int(name: str) -> Optional[int]:
     value = os.getenv(name, "").strip()
     return int(value) if value else None
 
@@ -52,7 +53,7 @@ def rating_label(rating: int) -> str:
     return "None"
 
 
-def make_record_embed(user: discord.abc.User, record: ThreatRecord | None) -> discord.Embed:
+def make_record_embed(user: discord.abc.User, record: Optional[ThreatRecord]) -> discord.Embed:
     rating = record.rating if record else 0
     embed = discord.Embed(
         title=f"Monitoring heat: {user}",
@@ -70,7 +71,7 @@ def make_record_embed(user: discord.abc.User, record: ThreatRecord | None) -> di
     return embed
 
 
-async def ensure_guild_context(interaction: discord.Interaction) -> int | None:
+async def ensure_guild_context(interaction: discord.Interaction) -> Optional[int]:
     if interaction.guild is None:
         await interaction.response.send_message(
             "Monitoring heat is server-specific. Use this command inside a server.",
@@ -258,9 +259,9 @@ async def threat_leaderboard(interaction: discord.Interaction, limit: app_comman
 )
 async def threat_config(
     interaction: discord.Interaction,
-    mod_role: discord.Role | None = None,
-    alert_channel: discord.TextChannel | None = None,
-    alert_threshold: app_commands.Range[int, 0, 100] | None = None,
+    mod_role: Optional[discord.Role] = None,
+    alert_channel: Optional[discord.TextChannel] = None,
+    alert_threshold: Optional[app_commands.Range[int, 0, 100]] = None,
 ) -> None:
     if not await ensure_moderator(interaction):
         return
