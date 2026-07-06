@@ -29,7 +29,7 @@ TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = optional_int("DISCORD_GUILD_ID")
 DEFAULT_MOD_ROLE_ID = optional_int("DEFAULT_MOD_ROLE_ID")
 DEFAULT_ALERT_CHANNEL_ID = optional_int("DEFAULT_ALERT_CHANNEL_ID")
-DEFAULT_ALERT_THRESHOLD = clamp_rating(int(os.getenv("DEFAULT_ALERT_THRESHOLD", "80")))
+DEFAULT_ALERT_THRESHOLD = clamp_rating(int(os.getenv("DEFAULT_ALERT_THRESHOLD", "8")))
 
 store = ThreatStore(DATABASE_PATH)
 
@@ -42,11 +42,11 @@ threat = app_commands.Group(
 
 
 def rating_label(rating: int) -> str:
-    if rating >= 90:
+    if rating >= 9:
         return "Critical"
-    if rating >= 70:
+    if rating >= 7:
         return "High"
-    if rating >= 40:
+    if rating >= 4:
         return "Medium"
     if rating > 0:
         return "Low"
@@ -57,8 +57,8 @@ def make_record_embed(user: discord.abc.User, record: Optional[ThreatRecord]) ->
     rating = record.rating if record else 0
     embed = discord.Embed(
         title=f"Monitoring heat: {user}",
-        description=f"**{rating}/100** ({rating_label(rating)})",
-        color=discord.Color.red() if rating >= 70 else discord.Color.orange() if rating >= 40 else discord.Color.green(),
+        description=f"**{rating}/10** ({rating_label(rating)})",
+        color=discord.Color.red() if rating >= 7 else discord.Color.orange() if rating >= 4 else discord.Color.green(),
     )
     embed.add_field(name="Character/player", value=user.mention, inline=True)
     if record:
@@ -132,7 +132,7 @@ async def maybe_send_threshold_alert(
 
     embed = discord.Embed(
         title="Government monitoring threshold reached",
-        description=f"{user.mention} now has **{record.rating}/100** monitoring heat.",
+        description=f"{user.mention} now has **{record.rating}/10** monitoring heat.",
         color=discord.Color.red(),
     )
     embed.add_field(name="Previous rating", value=str(old_rating), inline=True)
@@ -151,9 +151,9 @@ async def view_threat(interaction: discord.Interaction, user: discord.User) -> N
     await interaction.response.send_message(embed=make_record_embed(user, record), ephemeral=True)
 
 
-@threat.command(name="set", description="Set monitoring heat from 0 to 100.")
-@app_commands.describe(user="The character/player to rate.", rating="A number from 0 to 100.", reason="What happened in the fiction.")
-async def set_threat(interaction: discord.Interaction, user: discord.User, rating: app_commands.Range[int, 0, 100], reason: str) -> None:
+@threat.command(name="set", description="Set monitoring heat from 0 to 10.")
+@app_commands.describe(user="The character/player to rate.", rating="A number from 0 to 10.", reason="What happened in the fiction.")
+async def set_threat(interaction: discord.Interaction, user: discord.User, rating: app_commands.Range[int, 0, 10], reason: str) -> None:
     if not await ensure_moderator(interaction):
         return
     record, old_rating = store.change_rating(
@@ -168,16 +168,16 @@ async def set_threat(interaction: discord.Interaction, user: discord.User, ratin
     await maybe_send_threshold_alert(interaction, user, record, old_rating)
 
 
-@threat.command(name="add", description="Increase a character's monitoring heat.")
-@app_commands.describe(user="The character/player to update.", amount="How many points to add.", reason="What happened in the fiction.")
-async def add_threat(interaction: discord.Interaction, user: discord.User, amount: app_commands.Range[int, 1, 100], reason: str) -> None:
+@threat.command(name="raise", description="Raise a character's monitoring heat.")
+@app_commands.describe(user="The character/player to update.", amount="How many points to raise.", reason="What happened in the fiction.")
+async def raise_threat(interaction: discord.Interaction, user: discord.User, amount: app_commands.Range[int, 1, 10], reason: str) -> None:
     if not await ensure_moderator(interaction):
         return
     current = store.get_record(interaction.guild_id, user.id)
     record, old_rating = store.change_rating(
         interaction.guild_id,
         user.id,
-        action="add",
+        action="raise",
         new_rating=(current.rating if current else 0) + amount,
         reason=reason,
         moderator_id=interaction.user.id,
@@ -188,7 +188,7 @@ async def add_threat(interaction: discord.Interaction, user: discord.User, amoun
 
 @threat.command(name="lower", description="Decrease a character's monitoring heat.")
 @app_commands.describe(user="The character/player to update.", amount="How many points to subtract.", reason="What changed in the fiction.")
-async def lower_threat(interaction: discord.Interaction, user: discord.User, amount: app_commands.Range[int, 1, 100], reason: str) -> None:
+async def lower_threat(interaction: discord.Interaction, user: discord.User, amount: app_commands.Range[int, 1, 10], reason: str) -> None:
     if not await ensure_moderator(interaction):
         return
     current = store.get_record(interaction.guild_id, user.id)
@@ -245,7 +245,7 @@ async def threat_leaderboard(interaction: discord.Interaction, limit: app_comman
         return
 
     lines = [
-        f"**{index}.** <@{record.user_id}> - **{record.rating}/100** ({rating_label(record.rating)})"
+        f"**{index}.** <@{record.user_id}> - **{record.rating}/10** ({rating_label(record.rating)})"
         for index, record in enumerate(records, start=1)
     ]
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
@@ -261,7 +261,7 @@ async def threat_config(
     interaction: discord.Interaction,
     mod_role: discord.Role = None,
     alert_channel: discord.TextChannel = None,
-    alert_threshold: app_commands.Range[int, 0, 100] = None,
+    alert_threshold: app_commands.Range[int, 0, 10] = None,
 ) -> None:
     if not await ensure_moderator(interaction):
         return

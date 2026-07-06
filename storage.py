@@ -13,7 +13,7 @@ def utc_now_iso() -> str:
 
 
 def clamp_rating(value: int) -> int:
-    return max(0, min(100, value))
+    return max(0, min(10, value))
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,7 @@ class ThreatStore:
                     guild_id INTEGER PRIMARY KEY,
                     mod_role_id INTEGER,
                     alert_channel_id INTEGER,
-                    alert_threshold INTEGER NOT NULL DEFAULT 80
+                    alert_threshold INTEGER NOT NULL DEFAULT 8
                 )
                 """
             )
@@ -97,6 +97,53 @@ class ThreatStore:
                 ON threat_history (guild_id, user_id, created_at DESC)
                 """
             )
+            self._migrate_scale_to_ten(db)
+
+    def _migrate_scale_to_ten(self, db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            UPDATE threat_history
+            SET action = 'raise'
+            WHERE action = 'add'
+            """
+        )
+
+        max_rating = db.execute("SELECT MAX(rating) FROM threats").fetchone()[0]
+        max_threshold = db.execute("SELECT MAX(alert_threshold) FROM guild_settings").fetchone()[0]
+        max_history = db.execute("SELECT MAX(new_rating) FROM threat_history").fetchone()[0]
+
+        if not any(value is not None and value > 10 for value in (max_rating, max_threshold, max_history)):
+            return
+
+        db.execute(
+            """
+            UPDATE threats
+            SET rating = MIN(10, CAST(ROUND(rating / 10.0) AS INTEGER))
+            WHERE rating > 10
+            """
+        )
+        db.execute(
+            """
+            UPDATE guild_settings
+            SET alert_threshold = MIN(10, CAST(ROUND(alert_threshold / 10.0) AS INTEGER))
+            WHERE alert_threshold > 10
+            """
+        )
+        db.execute(
+            """
+            UPDATE threat_history
+            SET
+                old_rating = MIN(10, CAST(ROUND(old_rating / 10.0) AS INTEGER)),
+                new_rating = MIN(10, CAST(ROUND(new_rating / 10.0) AS INTEGER))
+            WHERE old_rating > 10 OR new_rating > 10
+            """
+        )
+        db.execute(
+            """
+            UPDATE threat_history
+            SET delta = new_rating - old_rating
+            """
+        )
 
     def ensure_guild(
         self,
@@ -104,7 +151,7 @@ class ThreatStore:
         *,
         default_mod_role_id: int | None = None,
         default_alert_channel_id: int | None = None,
-        default_alert_threshold: int = 80,
+        default_alert_threshold: int = 8,
     ) -> GuildSettings:
         with self._connect() as db:
             db.execute(
@@ -130,7 +177,7 @@ class ThreatStore:
                 (guild_id,),
             ).fetchone()
         if row is None:
-            return GuildSettings(guild_id, None, None, 80)
+            return GuildSettings(guild_id, None, None, 8)
         return GuildSettings(
             guild_id=row["guild_id"],
             mod_role_id=row["mod_role_id"],

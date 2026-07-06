@@ -19,8 +19,8 @@ The bot does not infer or assign ratings automatically. Storytellers set and adj
 | Command | Description |
 | --- | --- |
 | `/threat view user` | View a character's current monitoring heat. |
-| `/threat set user rating reason` | Set monitoring heat from 0 to 100. |
-| `/threat add user amount reason` | Increase monitoring heat. |
+| `/threat set user rating reason` | Set monitoring heat from 0 to 10. |
+| `/threat raise user amount reason` | Raise monitoring heat. |
 | `/threat lower user amount reason` | Decrease monitoring heat. |
 | `/threat reset user reason` | Reset monitoring heat to 0. |
 | `/threat history user limit` | Show recent monitoring heat changes. |
@@ -57,7 +57,7 @@ For Oracle Cloud hosting, see [ORACLE_DEPLOY.md](ORACLE_DEPLOY.md).
 Users with **Manage Server** permission can configure the bot:
 
 ```text
-/threat config mod_role:@Storytellers alert_channel:#chronicle-alerts alert_threshold:80
+/threat config mod_role:@Storytellers alert_channel:#chronicle-alerts alert_threshold:8
 ```
 
 After a storyteller role is configured, members with that role can modify ratings. Users with **Manage Server** or **Administrator** can always use configuration and write commands.
